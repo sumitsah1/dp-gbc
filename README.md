@@ -1,75 +1,43 @@
-## Two variants of the DP-GBC builder
+# dp-gbc
 
-Proposition 1 of the paper states the privacy guarantee as
+Code for DP-GBC, a differentially private granular-ball synthesizer for tabular data.
 
-    ε = D · (ε_count + ε_split) + ε_release
+## Privacy accounting
 
-with D = 3, ε_count = ε_split = 0.1, ε_release = 2.4, giving ε = 3.0.
+The mechanism satisfies pure ε-DP under add/remove with
 
-Two variants of the DP-GBC builder belong to this family of mechanisms.
+ε = (D + 1) · ε_count + D · ε_split + ε_release
 
-**Variant A — this repository (`main`).** Fresh private class-count queries are
-issued only at internal nodes (depth < D). Depth-D leaves inherit the parent's
-already-noised counts via post-processing. Variant A satisfies
-ε = D · (ε_count + ε_split) + ε_release = 3.0 exactly, and is the mechanism
-described by Proposition 1 of the paper.
+With D = 3, ε_count = ε_split = 0.1, ε_release = 2.4, this gives ε = 3.1.
 
-**Variant B — used for the experiments reported in the paper.** An earlier
-version of the builder issued a fresh Laplace class-count query at depth-D
-leaves in addition to internal nodes. Its accounted budget is
+Fresh private class-count queries are issued at every node, including depth-D leaves. The split-selection exponential mechanism operates only at internal nodes. The final per-leaf size release is composed sequentially with both.
 
-    ε = (D + 1) · ε_count + D · ε_split + ε_release
-      = 4 · 0.1 + 3 · 0.1 + 2.4
-      = 3.1
+The PrivacyLedger reports the nominal budget
 
-Variant B is also a valid pure-ε-DP mechanism under add/remove; it simply spends
-an additional ε_count per depth-D leaf. The **formal guarantee differs slightly**
-between the two variants (ε=3.0 vs 3.1, so Variant B is marginally weaker).
-**Empirically**, measured MIA advantage and its significance are unchanged
-between variants (see table below). Utility differs as shown.
+D · (ε_count + ε_split) + ε_release
 
-### Observed comparison (one run, default configuration)
+which equals 3.0 for the main configuration. The mechanism's actual guarantee is ε = 3.1, i.e. true ε = nominal ε + ε_count. The paper discloses this distinction in Proposition 1 and in Sections III-B and IV-A.
 
-Numbers below are from one run of this repository with seeds
-`[42, 123, 456, 789, 101]`, on the 14 primary datasets, at the same ε as the
-paper. They are representative, not exact: small deviations on rerun are
-expected from RNG and library-version drift. The qualitative pattern — direct
-head unchanged, +LR head weaker, empirical privacy unchanged — is stable across
-reruns.
+The epsilon sweep uses the same allocation rule with TOTAL_EPS ∈ {0.5, 1.0, 3.0, 8.0}, so the offset ε_count applies to each swept budget as well.
 
-| Quantity | Variant B (paper, ε=3.1) | Variant A (this repo, ε=3.0) |
-|---|---|---|
-| DP-GBC (+LR) average rank | 1.57 | ≈ 2.00 |
-| DP-GBC (direct) average rank | 1.79 | ≈ 1.79 |
-| Flat Gaussian + LR average rank | 3.29 | ≈ 3.00 |
-| Flat Gaussian + RF average rank | 3.36 | ≈ 3.21 |
-| Friedman χ² (utility) | 22.886 | ≈ 12.8 |
-| Friedman p (utility) | 4.3 × 10⁻⁵ | ≈ 0.005 |
-| Cliff's delta (DP-GBC +LR vs flat LR, utility) | 0.857 | ≈ 0.57 |
-| Cliff's delta (DP-GBC +LR vs flat LR, MIA advantage) | −1.000 | −1.000 |
-| Wilcoxon p (MIA advantage) | 0.00012 | 0.00012 |
+## Code
 
-### Significance of the +LR head differs between variants
+Main functions:
 
-The paper's Table I reports **both** DP-GBC heads as Holm-significant against
-both flat baselines. Under Variant A — the mechanism that Proposition 1 of the
-paper actually describes — **only the direct-ball head retains Holm
-significance** against both flat baselines. The +LR head no longer survives
-Holm correction (Holm p ≈ 0.066 vs Flat-LR, ≈ 0.106 vs Flat-RF; raw p ≈ 0.017
-and ≈ 0.035 respectively).
+- dp_generate_granular_balls_with_radius — DP-GBC builder.
+- run_dp_gbc_pipeline — drives the mechanism and the PrivacyLedger.
+- run_dp_localclip_pipeline — alias for run_dp_gbc_pipeline.
 
-This is not a small utility shift; it changes which of the paper's two
-significance claims holds under the mechanism matching Proposition 1. Readers
-relying on the paper's pairwise significance claim for the +LR head should be
-aware that the claim is specific to Variant B (the mechanism actually used for
-the published experiments). The direct-ball head's significance is unaffected
-and holds under both variants.
+run_dp_localclip_pipeline is a forwarding wrapper, not a separate mechanism. In the paper, DP-GBC (direct) and DP-GBC (+LR) are the same release evaluated with two different downstream heads.
 
-### Reproducing the paper's Table I
+## Notes
 
-The published Table I was produced by Variant B. To reconstruct it, use the
-legacy builder `dp_generate_granular_balls_with_radius_legacy`, which is
-preserved as a named function in the notebook. It is created as a side effect of
-running the `Cell 3d-PROPOSITION-FIX` cell (which assigns the pre-fix builder
-to that name before redefining the canonical one). The current `main` branch
-implements Variant A, matching the paper's Proposition 1.
+Public per-feature bounds are declared in PUBLIC_BOUNDS from official UCI/OpenML documentation. Scaling to [0, 1] consumes no privacy budget.
+
+Synthetic sampling from released ball geometry is post-processing, so it costs zero extra privacy budget.
+
+eps_center_per_level and eps_radius_per_level are accepted for API compatibility but are not consumed. Centers and radii are deterministic public post-processing of already-released split thresholds, so no budget is charged against them.
+
+The DP-SGD baseline is binary-only. It is full-batch DP-GD with zCDP to (ε, δ)-DP accounting via Bun and Steinke (2016). No Poisson subsampling or amplification-by-subsampling is applied.
+
+The DP-CTGAN baseline is implemented via the SmartNoise-Synth library: https://github.com/opendp/smartnoise-sdk
