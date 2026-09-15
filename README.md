@@ -1,54 +1,75 @@
-# dp-gbc
+## Two variants of the DP-GBC builder
 
-Code for DP-GBC, a differentially private granular-ball synthesizer for tabular data.
-
-## Privacy accounting (current code)
-
-The repository implements the mechanism described by Proposition 1 of the paper:
+Proposition 1 of the paper states the privacy guarantee as
 
     ε = D · (ε_count + ε_split) + ε_release
 
-Fresh private class-count queries are issued only at internal nodes (depth < D).
-Nodes at depth D become leaves and inherit the parent's already-noised class counts
-(post-processing, zero additional budget).
+with D = 3, ε_count = ε_split = 0.1, ε_release = 2.4, giving ε = 3.0.
 
-Main experiment settings:
+Two variants of the DP-GBC builder belong to this family of mechanisms.
 
-    D = 3
-    ε_count = 0.1
-    ε_split = 0.1
-    ε_release = 2.4
-    ε = 3 · (0.1 + 0.1) + 2.4 = 3.0
+**Variant A — this repository (`main`).** Fresh private class-count queries are
+issued only at internal nodes (depth < D). Depth-D leaves inherit the parent's
+already-noised counts via post-processing. Variant A satisfies
+ε = D · (ε_count + ε_split) + ε_release = 3.0 exactly, and is the mechanism
+described by Proposition 1 of the paper.
 
-## Note on the published results
-
-The experiments reported in the paper were produced by an **earlier version** of
-the DP-GBC builder that issued a fresh Laplace class-count query at depth-D leaves
-*in addition to* internal nodes. Its actual accounted budget was:
+**Variant B — used for the experiments reported in the paper.** An earlier
+version of the builder issued a fresh Laplace class-count query at depth-D
+leaves in addition to internal nodes. Its accounted budget is
 
     ε = (D + 1) · ε_count + D · ε_split + ε_release
       = 4 · 0.1 + 3 · 0.1 + 2.4
       = 3.1
 
-not the 3.0 stated in Proposition 1 of the paper. The paper's Proposition 1
-formula describes the corrected mechanism, which is what this repository now
-implements.
+Variant B is also a valid pure-ε-DP mechanism under add/remove; it simply spends
+an additional ε_count per depth-D leaf. The **formal guarantee differs slightly**
+between the two variants (ε=3.0 vs 3.1, so Variant B is marginally weaker).
+**Empirically**, measured MIA advantage and its significance are unchanged
+between variants (see table below). Utility differs as shown.
 
-The corrected mechanism is **not bit-identical** to the one that produced the
-published numbers, because depth-D leaf label distributions now come from the
-parent node.
+### Observed comparison (one run, default configuration)
 
-## Code path
+Numbers below are from one run of this repository with seeds
+`[42, 123, 456, 789, 101]`, on the 14 primary datasets, at the same ε as the
+paper. They are representative, not exact: small deviations on rerun are
+expected from RNG and library-version drift. The qualitative pattern — direct
+head unchanged, +LR head weaker, empirical privacy unchanged — is stable across
+reruns.
 
-- `dp_generate_granular_balls_with_radius` — DP-GBC builder, aligned with Proposition 1.
-- `dp_generate_kdtree_balls` — KD-tree-style label-oblivious split baseline,
-  using the same accounting convention.
-- `run_dp_gbc_pipeline` — charges `D · (ε_count + ε_split) + ε_release` through `PrivacyLedger`.
-- `run_dp_localclip_pipeline` — alias for `run_dp_gbc_pipeline`.
+| Quantity | Variant B (paper, ε=3.1) | Variant A (this repo, ε=3.0) |
+|---|---|---|
+| DP-GBC (+LR) average rank | 1.57 | ≈ 2.00 |
+| DP-GBC (direct) average rank | 1.79 | ≈ 1.79 |
+| Flat Gaussian + LR average rank | 3.29 | ≈ 3.00 |
+| Flat Gaussian + RF average rank | 3.36 | ≈ 3.21 |
+| Friedman χ² (utility) | 22.886 | ≈ 12.8 |
+| Friedman p (utility) | 4.3 × 10⁻⁵ | ≈ 0.005 |
+| Cliff's delta (DP-GBC +LR vs flat LR, utility) | 0.857 | ≈ 0.57 |
+| Cliff's delta (DP-GBC +LR vs flat LR, MIA advantage) | −1.000 | −1.000 |
+| Wilcoxon p (MIA advantage) | 0.00012 | 0.00012 |
 
-## Additional notes
+### Significance of the +LR head differs between variants
 
-- Public per-feature bounds are declared in `PUBLIC_BOUNDS` from official UCI/OpenML
-  documentation; scaling to [0, 1] consumes no privacy budget.
-- Synthetic sampling from released ball geometry is post-processing (zero extra budget).
-- The DP-SGD baseline is binary-only and uses zCDP to (ε, δ)-DP accounting.
+The paper's Table I reports **both** DP-GBC heads as Holm-significant against
+both flat baselines. Under Variant A — the mechanism that Proposition 1 of the
+paper actually describes — **only the direct-ball head retains Holm
+significance** against both flat baselines. The +LR head no longer survives
+Holm correction (Holm p ≈ 0.066 vs Flat-LR, ≈ 0.106 vs Flat-RF; raw p ≈ 0.017
+and ≈ 0.035 respectively).
+
+This is not a small utility shift; it changes which of the paper's two
+significance claims holds under the mechanism matching Proposition 1. Readers
+relying on the paper's pairwise significance claim for the +LR head should be
+aware that the claim is specific to Variant B (the mechanism actually used for
+the published experiments). The direct-ball head's significance is unaffected
+and holds under both variants.
+
+### Reproducing the paper's Table I
+
+The published Table I was produced by Variant B. To reconstruct it, use the
+legacy builder `dp_generate_granular_balls_with_radius_legacy`, which is
+preserved as a named function in the notebook. It is created as a side effect of
+running the `Cell 3d-PROPOSITION-FIX` cell (which assigns the pre-fix builder
+to that name before redefining the canonical one). The current `main` branch
+implements Variant A, matching the paper's Proposition 1.
